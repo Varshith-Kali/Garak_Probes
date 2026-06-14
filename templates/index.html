@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Garak AI Security Gatekeeper — adversarial probing for Hugging Face and local LLMs.">
-  <title>Garak Gatekeeper</title>
+  <meta name="description" content="Garak Probes — Adversarial AI security scanner for Hugging Face models. Detect jailbreaks, prompt injection, data leakage and 20+ vulnerability classes before production.">
+  <title>Garak Probes · AI Security Gatekeeper</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -560,16 +560,16 @@
       <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"/>
       <polyline points="9,12 11,14 15,10"/>
     </svg>
-    Garak Gatekeeper
+    Garak Probes
   </a>
   <div class="topbar-sep"></div>
   <span class="status-pill" id="pill-garak">
     <span class="s-dot" id="dot-garak"></span>
     <span id="txt-garak">loading…</span>
   </span>
-  <span class="status-pill" id="pill-ollama" style="cursor:default;">
-    <span class="s-dot" id="dot-ollama"></span>
-    <span id="txt-ollama">Ollama</span>
+  <span class="status-pill" id="pill-hf" style="cursor:default;">
+    <span class="s-dot" style="background:var(--green);"></span>
+    <span>HF Pipeline</span>
   </span>
   <nav class="topbar-nav">
     <a href="#scan" class="topbar-link">Scanner</a>

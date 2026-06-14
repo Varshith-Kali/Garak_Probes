@@ -1569,22 +1569,43 @@ async def scan_progress(job_id: str) -> JSONResponse:
 
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
-        # tqdm lines look like: "probes.dan.Ablation_Dan_11_0:  16%|█▌  | 20/127 [02:38<14:40,  8.23s/it]"
-        # or bare:              "  16%|█▌  | 20/127 [02:38<14:40"
-        import re as _re
-        matches = _re.findall(r"(\d+)/(\d+)\s*\[[\d:]+<([\d:]+)", text)
-        if matches:
-            last = matches[-1]
-            completed = int(last[0])
-            total     = int(last[1])
+
+        # tqdm emits lines like:
+        #   "probes.promptinject.HijackHateHumans:  16%|█▌ | 5/30 [00:12<01:02, ...]"
+        # For multi-probe suites each probe has its own bar — track them independently
+        # so the % never resets when the next probe starts.
+
+        # Build per-probe dict: probe_name → (done, total, eta_str)
+        probe_state: Dict[str, tuple] = {}
+        eta_s = None
+        for line in re.split(r'[\r\n]+', text):
+            # Named bar: "SomeName:  16%|...|  5/30 [00:12<01:02, ...]"
+            m = re.search(r'([\w.]+):\s+\d+%\|[^|]*\|\s*(\d+)/(\d+)\s*\[([\d:]+)<([\d:?]+)', line)
+            if m:
+                probe_state[m.group(1)] = (int(m.group(2)), int(m.group(3)), m.group(5))
+                continue
+            # Bare bar: "  16%|...|  5/30 [00:12<01:02, ...]"
+            m2 = re.search(r'\d+%\|[^|]*\|\s*(\d+)/(\d+)\s*\[([\d:]+)<([\d:?]+)', line)
+            if m2:
+                probe_state["__current__"] = (int(m2.group(1)), int(m2.group(2)), m2.group(4))
+
+        if probe_state:
+            completed = sum(v[0] for v in probe_state.values())
+            total     = sum(v[1] for v in probe_state.values())
             pct       = round(completed / total * 100, 1) if total else 0
-            # Parse ETA string "MM:SS" or "HH:MM:SS"
-            eta_raw = last[2]
-            parts = eta_raw.split(":")
-            if len(parts) == 2:
-                eta_s = int(parts[0]) * 60 + int(parts[1])
-            elif len(parts) == 3:
-                eta_s = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+
+            # ETA from the last in-progress (non-100%) bar
+            for _, (done, tot, eta_raw) in reversed(list(probe_state.items())):
+                if done < tot and eta_raw not in ("00:00", "?"):
+                    parts = eta_raw.split(":")
+                    try:
+                        if len(parts) == 2:
+                            eta_s = int(parts[0]) * 60 + int(parts[1])
+                        elif len(parts) == 3:
+                            eta_s = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                    except ValueError:
+                        pass
+                    break
     except Exception:
         pass
 
