@@ -574,7 +574,7 @@
   <nav class="topbar-nav">
     <a href="#scan" class="topbar-link">Scanner</a>
     <a href="#history" class="topbar-link">History</a>
-    <a href="/docs" class="topbar-link">API</a>
+    <a href="/docs" target="_blank" class="topbar-link">API ↗</a>
     <a href="/health" class="topbar-link">Health</a>
   </nav>
 </header>
@@ -743,8 +743,13 @@
       <p class="panel-heading">Engine</p>
       <div class="engine-card">
         <div class="engine-card-head">
-          <span class="engine-card-title">Garak 0.15.0</span>
+          <span class="engine-card-title" id="engine-version-label">Garak 0.15.0</span>
           <span class="badge" id="engine-badge" style="color:var(--muted);background:var(--surface2);border:1px solid var(--border);">checking…</span>
+        </div>
+        <div style="display:flex;gap:6px;margin:6px 0 8px;flex-wrap:wrap;">
+          <a href="/docs" target="_blank" style="font-size:10px;color:var(--accent);text-decoration:none;border:1px solid rgba(0,192,139,.2);border-radius:4px;padding:2px 7px;">⧉ REST API</a>
+          <a href="https://github.com/NVIDIA/garak" target="_blank" style="font-size:10px;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:4px;padding:2px 7px;">GitHub ↗</a>
+          <span id="engine-checked-at" style="font-size:10px;color:var(--muted);margin-left:auto;align-self:center;"></span>
         </div>
         <div class="engine-stats">
           <div class="engine-stat"><strong id="cnt-probes">—</strong><span>Probes</span></div>
@@ -1063,51 +1068,43 @@ function toggleAdv() {
   body.classList.toggle("open");
 }
 
-// ═══════════════════════════════════════════
-//  ENGINE STATUS
-// ═══════════════════════════════════════════
+// --- ENGINE STATUS ---
 async function loadEngineStatus() {
   try {
     const r = await fetch("/api/v1/garak/capabilities.json");
     const d = await r.json();
-    const avail = !!d.available;
-    const badge = sel("engine-badge");
+    const avail  = !!d.available;
+    const badge  = sel("engine-badge");
     const counts = d.counts || {};
+    const verLbl = sel("engine-version-label");
+    const checkedAt = sel("engine-checked-at");
 
     if (avail) {
-      badge.className = "badge approved";
+      badge.className   = "badge approved";
       badge.textContent = "Online";
-      setStatus("dot-garak","txt-garak","Garak online","online pulse");
+      setStatus("dot-garak", "txt-garak", "Garak · online", "online pulse");
+      if (verLbl && d.version_output) verLbl.textContent = d.version_output || "Garak";
     } else {
-      badge.className = "badge failed";
+      badge.className   = "badge failed";
       badge.textContent = "Offline";
-      setStatus("dot-garak","txt-garak","Garak offline","offline");
+      setStatus("dot-garak", "txt-garak", "Garak · offline", "offline");
     }
-    sel("cnt-probes").textContent = counts.probes    ?? "—";
-    sel("cnt-det").textContent    = counts.detectors ?? "—";
-    sel("cnt-gen").textContent    = counts.generators?? "—";
-    sel("cnt-buffs").textContent  = counts.buffs     ?? "—";
+
+    sel("cnt-probes").textContent = counts.probes     ?? "—";
+    sel("cnt-det").textContent    = counts.detectors  ?? "—";
+    sel("cnt-gen").textContent    = counts.generators ?? "—";
+    sel("cnt-buffs").textContent  = counts.buffs      ?? "—";
+
+    if (checkedAt) {
+      const now = new Date();
+      checkedAt.textContent = `checked ${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+    }
   } catch {
-    setStatus("dot-garak","txt-garak","Garak error","offline");
+    setStatus("dot-garak", "txt-garak", "Garak · error", "offline");
   }
 }
 
-async function fetchOllamaModels() {
-  try {
-    const r = await fetch("/api/v1/ollama/models");
-    const d = await r.json();
-    if (d.available) {
-      setStatus("dot-ollama","txt-ollama",`Ollama · ${d.models.length} model${d.models.length!==1?"s":""}`, "online pulse");
-      return d.models;
-    } else {
-      setStatus("dot-ollama","txt-ollama","Ollama · offline","offline");
-      return [];
-    }
-  } catch {
-    setStatus("dot-ollama","txt-ollama","Ollama · offline","offline");
-    return [];
-  }
-}
+
 
 async function fetchHFSuggestions() {
   try {

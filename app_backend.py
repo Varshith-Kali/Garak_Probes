@@ -724,36 +724,42 @@ def _parse_list_output(raw: str) -> List[str]:
     return items
 
 
+_CAP_CACHE: Dict[str, Any] = {}
+_CAP_CACHE_TS: float = 0.0
+_CAP_CACHE_TTL = 1800  # 30 min
+
 def _garak_capabilities_snapshot() -> Dict[str, Any]:
+    global _CAP_CACHE, _CAP_CACHE_TS
+    import time
+    if _CAP_CACHE and (time.time() - _CAP_CACHE_TS) < _CAP_CACHE_TTL:
+        return _CAP_CACHE
+
     env = _build_env(
         ScanRequest(
-            target_type="ollama",
-            target_name="mistral:latest",
+            target_type="huggingface",
+            target_name="gpt2",
             probe_name="promptinject",
         )
     )
     py = _garak_python_executable()
-    rc_ver,  ver_out   = _run_cli_capture([py, "-m", "garak", "--version"], env)
-    rc_help, help_out  = _run_cli_capture([py, "-m", "garak", "--help"], env)
-    rc_p,    probes_out = _run_cli_capture([py, "-m", "garak", "--list_probes"], env, timeout=60)
-    rc_d,    det_out   = _run_cli_capture([py, "-m", "garak", "--list_detectors"], env, timeout=60)
-    rc_g,    gen_out   = _run_cli_capture([py, "-m", "garak", "--list_generators"], env, timeout=60)
-    rc_b,    buffs_out = _run_cli_capture([py, "-m", "garak", "--list_buffs"], env, timeout=60)
+    rc_ver,  ver_out    = _run_cli_capture([py, "-m", "garak", "--version"], env)
+    rc_help, help_out   = _run_cli_capture([py, "-m", "garak", "--help"], env)
+    rc_p,    probes_out = _run_cli_capture([py, "-m", "garak", "--list_probes"],     env, timeout=60)
+    rc_d,    det_out    = _run_cli_capture([py, "-m", "garak", "--list_detectors"],  env, timeout=60)
+    rc_g,    gen_out    = _run_cli_capture([py, "-m", "garak", "--list_generators"], env, timeout=60)
+    rc_b,    buffs_out  = _run_cli_capture([py, "-m", "garak", "--list_buffs"],      env, timeout=60)
 
     available  = (rc_ver == 0 and rc_help == 0)
     help_lines = [ln.strip() for ln in help_out.splitlines()]
     feature_flags = {
-        "probe_tags":          any("--probe_tags"          in ln for ln in help_lines),
-        "extended_detectors":  any("--extended_detectors"  in ln for ln in help_lines),
-        "detector_options":    any("--detector_options"    in ln for ln in help_lines),
-        "generator_options":   any("--generator_options"   in ln for ln in help_lines),
-        "buffs":               any("--buffs"               in ln for ln in help_lines),
-        "taxonomy":            any("--taxonomy"            in ln for ln in help_lines),
-        "interactive":         any("--interactive"         in ln for ln in help_lines),
-        "fix":                 any("--fix"                 in ln for ln in help_lines),
+        "probe_tags":         any("--probe_tags"         in ln for ln in help_lines),
+        "extended_detectors": any("--extended_detectors" in ln for ln in help_lines),
+        "detector_options":   any("--detector_options"   in ln for ln in help_lines),
+        "generator_options":  any("--generator_options"  in ln for ln in help_lines),
+        "buffs":              any("--buffs"              in ln for ln in help_lines),
+        "taxonomy":           any("--taxonomy"           in ln for ln in help_lines),
     }
 
-    # Extract version string cleanly
     version_str = ""
     if rc_ver == 0:
         for line in ver_out.splitlines():
@@ -762,12 +768,12 @@ def _garak_capabilities_snapshot() -> Dict[str, Any]:
                 version_str = stripped
                 break
 
-    return {
-        "available":       available,
-        "python":          py,
-        "version_output":  version_str,
-        "version_raw":     ver_out.strip(),
-        "feature_flags":   feature_flags,
+    result = {
+        "available":      available,
+        "python":         py,
+        "version_output": version_str,
+        "version_raw":    ver_out.strip(),
+        "feature_flags":  feature_flags,
         "counts": {
             "probes":     len(_parse_list_output(probes_out)) if rc_p == 0 else 0,
             "detectors":  len(_parse_list_output(det_out))    if rc_d == 0 else 0,
@@ -781,14 +787,18 @@ def _garak_capabilities_snapshot() -> Dict[str, Any]:
             "buffs":      _parse_list_output(buffs_out)[:10]  if rc_b == 0 else [],
         },
         "errors": {
-            "version":    None if rc_ver  == 0 else ver_out[-500:],
-            "help":       None if rc_help == 0 else help_out[-500:],
-            "probes":     None if rc_p    == 0 else probes_out[-500:],
-            "detectors":  None if rc_d    == 0 else det_out[-500:],
-            "generators": None if rc_g    == 0 else gen_out[-500:],
-            "buffs":      None if rc_b    == 0 else buffs_out[-500:],
+            "version":    None if rc_ver  == 0 else ver_out[-400:],
+            "probes":     None if rc_p    == 0 else probes_out[-400:],
+            "detectors":  None if rc_d    == 0 else det_out[-400:],
+            "generators": None if rc_g    == 0 else gen_out[-400:],
+            "buffs":      None if rc_b    == 0 else buffs_out[-400:],
         },
     }
+
+    if available:
+        _CAP_CACHE = result
+        _CAP_CACHE_TS = time.time()
+    return result
 
 
 def _latest_jsonl(scope: Path) -> Optional[Path]:
