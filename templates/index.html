@@ -1,0 +1,1576 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Garak AI Security Gatekeeper — adversarial probing for Hugging Face and local LLMs.">
+  <title>Garak Gatekeeper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0d0d;
+      --surface:   #141414;
+      --surface2:  #1a1a1a;
+      --border:    #262626;
+      --border2:   #2e2e2e;
+      --text:      #e8e8e8;
+      --muted:     #6b6b6b;
+      --muted2:    #444;
+      --accent:    #00c08b;
+      --accent-dim:#00c08b1a;
+      --red:       #f55;
+      --red-dim:   #f553331a;
+      --amber:     #f59e0b;
+      --amber-dim: #f59e0b1a;
+      --blue:      #60a5fa;
+      --radius:    6px;
+      --radius-lg: 10px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── TOPBAR ── */
+    .topbar {
+      height: 52px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      gap: 24px;
+      position: sticky;
+      top: 0;
+      background: rgba(13,13,13,0.95);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+    }
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .topbar-brand svg {
+      width: 20px; height: 20px;
+    }
+    .topbar-sep { width: 1px; height: 20px; background: var(--border); }
+    .topbar-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+    .topbar-link {
+      font-size: 13px; color: var(--muted); text-decoration: none;
+      padding: 4px 10px; border-radius: var(--radius);
+      transition: color .15s, background .15s;
+    }
+    .topbar-link:hover { color: var(--text); background: var(--surface2); }
+
+    /* ── STATUS PILLS ── */
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; font-family: 'JetBrains Mono', monospace;
+      color: var(--muted); padding: 3px 8px;
+      border: 1px solid var(--border);
+      border-radius: 100px;
+    }
+    .s-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--muted2); flex-shrink: 0;
+    }
+    .s-dot.online  { background: var(--accent); }
+    .s-dot.offline { background: var(--red); }
+    .s-dot.pulse   { animation: pulse 2s ease infinite; }
+
+    /* ── LAYOUT ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 0;
+      min-height: calc(100vh - 52px);
+    }
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    /* ── LEFT PANEL ── */
+    .left-panel {
+      border-right: 1px solid var(--border);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+    }
+
+    .panel-heading {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    /* ── FORM ── */
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label {
+      font-size: 12px; font-weight: 500; color: var(--muted);
+    }
+
+    .input, .select-wrap select {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color .15s;
+      appearance: none;
+    }
+    .input:focus, .select-wrap select:focus {
+      border-color: var(--accent);
+    }
+    .input::placeholder { color: var(--muted2); }
+    .input.mono, .select-wrap select.mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+    .input option, .select-wrap select option {
+      background: var(--surface);
+    }
+
+    .select-wrap {
+      position: relative;
+    }
+    .select-wrap::after {
+      content: '';
+      position: absolute;
+      right: 10px; top: 50%;
+      transform: translateY(-50%);
+      width: 0; height: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 5px solid var(--muted);
+      pointer-events: none;
+    }
+    .select-wrap select {
+      padding-right: 28px;
+      cursor: pointer;
+    }
+
+    .field-hint {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* ── ADVANCED SECTION ── */
+    .adv-toggle {
+      font-size: 12px; color: var(--muted); cursor: pointer;
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 0;
+      user-select: none;
+    }
+    .adv-toggle svg { transition: transform .2s; }
+    .adv-toggle.open svg { transform: rotate(90deg); }
+    .adv-body {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      padding-top: 4px;
+    }
+    .adv-body.open { display: flex; }
+    .adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .checkbox-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--muted); cursor: pointer;
+    }
+    .checkbox-row input { accent-color: var(--accent); cursor: pointer; }
+
+    /* ── BUTTON ── */
+    .btn-run {
+      width: 100%; padding: 10px;
+      font-size: 13px; font-weight: 600; font-family: inherit;
+      color: #000;
+      background: var(--accent);
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-run:hover { opacity: .9; }
+    .btn-run:active { transform: scale(.99); }
+    .btn-run:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+    .btn-run .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(0,0,0,.2);
+      border-top-color: #000;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: none;
+    }
+    .btn-run.loading .spinner { display: block; }
+    .btn-run.loading .btn-text { opacity: .7; }
+
+    /* ── ENGINE CARD ── */
+    .engine-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .engine-card-head {
+      padding: 12px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .engine-card-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .engine-stats {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+    }
+    .engine-stat {
+      padding: 12px 10px; text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .engine-stat:last-child { border-right: none; }
+    .engine-stat strong {
+      display: block;
+      font-size: 18px; font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text);
+    }
+    .engine-stat span { font-size: 11px; color: var(--muted); }
+
+    /* ── RIGHT PANEL ── */
+    .right-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      gap: 0;
+    }
+    .tab {
+      font-size: 13px; font-weight: 500; color: var(--muted);
+      padding: 14px 16px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color .15s;
+      user-select: none;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    .tab-panel { display: none; flex: 1; overflow: hidden; }
+    .tab-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ── RESULTS AREA ── */
+    .results-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    /* Empty state */
+    .empty {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; min-height: 300px; gap: 12px; text-align: center;
+    }
+    .empty-icon {
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .empty-title { font-size: 13px; font-weight: 500; color: var(--muted); }
+    .empty-sub   { font-size: 12px; color: var(--muted2); }
+
+    /* ── SCAN RESULT CARD ── */
+    .result-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      animation: fadeIn .2s ease;
+    }
+
+    .result-head {
+      padding: 14px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .result-model {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px; color: var(--text); font-weight: 500;
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .result-probe-tag {
+      font-size: 11px; color: var(--muted);
+      padding: 2px 8px; border-radius: 4px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    /* Status badge */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; font-weight: 500;
+      padding: 3px 8px; border-radius: 4px;
+      white-space: nowrap;
+    }
+    .badge-dot { width: 5px; height: 5px; border-radius: 50%; }
+    .badge.scanning { color: var(--amber); background: var(--amber-dim); border: 1px solid rgba(245,158,11,.2); }
+    .badge.queued   { color: var(--blue);  background: rgba(96,165,250,.08); border: 1px solid rgba(96,165,250,.2); }
+    .badge.approved { color: var(--accent);background: var(--accent-dim); border: 1px solid rgba(0,192,139,.2); }
+    .badge.rejected { color: var(--red);   background: var(--red-dim); border: 1px solid rgba(255,85,85,.2); }
+    .badge.failed   { color: var(--muted); background: var(--surface2); border: 1px solid var(--border); }
+
+    /* Progress bar */
+    .scan-progress {
+      height: 2px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .scan-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      animation: progress 3s ease-in-out infinite alternate;
+    }
+
+    /* Body sections */
+    .result-body { padding: 0; }
+
+    .result-section {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .result-section:last-child { border-bottom: none; }
+
+    .section-label {
+      font-size: 11px; font-weight: 600;
+      letter-spacing: .06em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 10px;
+    }
+
+    /* EFR meter */
+    .efr-row {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .efr-number {
+      font-size: 36px; font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      line-height: 1;
+    }
+    .efr-number.safe { color: var(--accent); }
+    .efr-number.danger { color: var(--red); }
+    .efr-meta { flex: 1; }
+    .efr-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .efr-bar-track {
+      height: 4px; background: var(--border);
+      border-radius: 2px; overflow: hidden;
+    }
+    .efr-bar-fill {
+      height: 100%; border-radius: 2px;
+      transition: width 1s ease;
+    }
+    .efr-bar-fill.safe   { background: var(--accent); }
+    .efr-bar-fill.danger { background: var(--red); }
+    .efr-threshold {
+      font-size: 11px; color: var(--muted); margin-top: 4px;
+    }
+
+    /* Verdict row */
+    .verdict-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .verdict-label {
+      font-size: 13px; font-weight: 600;
+    }
+    .verdict-sub { font-size: 12px; color: var(--muted); }
+    .verdict-icon { font-size: 18px; }
+
+    /* Probe breakdown */
+    .breakdown-list { display: flex; flex-direction: column; gap: 6px; }
+    .breakdown-item {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .breakdown-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--muted);
+      width: 120px; flex-shrink: 0;
+    }
+    .breakdown-bar-track {
+      flex: 1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden;
+    }
+    .breakdown-bar-fill { height: 100%; background: var(--red); border-radius: 2px; }
+    .breakdown-count { font-size: 11px; color: var(--muted); width: 24px; text-align: right; }
+
+    /* Vuln list */
+    .vuln-list { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+    .vuln-item {
+      font-size: 11px; font-family: 'JetBrains Mono', monospace;
+      padding: 5px 8px;
+      background: var(--red-dim);
+      border: 1px solid rgba(255,85,85,.1);
+      border-radius: 4px;
+      color: #fca5a5;
+      word-break: break-all;
+    }
+    .vuln-more {
+      background: var(--surface2);
+      border-color: var(--border);
+      color: var(--muted);
+    }
+
+    /* Error state */
+    .error-card {
+      padding: 16px;
+      border: 1px solid rgba(255,85,85,.15);
+      border-radius: var(--radius);
+      background: var(--red-dim);
+    }
+    .error-title { font-size: 13px; font-weight: 600; color: var(--red); margin-bottom: 4px; }
+    .error-msg { font-size: 12px; color: #fca5a5; line-height: 1.6; }
+
+    /* ── TERMINAL LOG ── */
+    .log-area {
+      background: #0a0a0a;
+      border-top: 1px solid var(--border);
+      padding: 12px 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      line-height: 1.7;
+      overflow-y: auto;
+      max-height: 240px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .log-line { color: var(--muted); }
+    .log-line.err  { color: #f87171; }
+    .log-line.warn { color: #fbbf24; }
+    .log-line.ok   { color: var(--accent); }
+    .log-line.info { color: #60a5fa; }
+    .log-placeholder { color: var(--muted2); font-style: italic; }
+
+    /* ── HISTORY TABLE ── */
+    .history-wrap {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .history-head {
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .history-head-title { font-size: 13px; font-weight: 500; }
+    .btn-sm {
+      font-size: 12px; font-weight: 500; font-family: inherit;
+      color: var(--muted); background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 4px 10px; cursor: pointer;
+      transition: all .15s; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-sm:hover { color: var(--text); border-color: var(--border2); }
+
+    .history-table-wrap { flex: 1; overflow-y: auto; }
+    .htable {
+      width: 100%; border-collapse: collapse;
+    }
+    .htable th {
+      position: sticky; top: 0;
+      padding: 8px 24px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .06em;
+      color: var(--muted); text-align: left;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .hrow { border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s; }
+    .hrow:last-child { border-bottom: none; }
+    .hrow:hover { background: var(--surface); }
+    .hcell {
+      padding: 10px 24px;
+      font-size: 12px; color: var(--muted);
+    }
+    .hcell.mono { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+    .hcell.model { color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hist-empty { padding: 40px 24px; text-align: center; color: var(--muted2); font-size: 13px; }
+
+    /* ── PROBE INFO TOOLTIP ── */
+    .probe-info {
+      padding: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 12px; color: var(--muted);
+      line-height: 1.5;
+    }
+    .probe-info strong { color: var(--text); }
+    .probe-owasp {
+      display: inline-block; margin-top: 6px;
+      font-size: 11px; font-family: 'JetBrains Mono', monospace;
+      color: var(--accent); opacity: .7;
+    }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    @keyframes spin    { to { transform: rotate(360deg); } }
+    @keyframes pulse   { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+    @keyframes progress { from { width: 20%; } to { width: 80%; } }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<header class="topbar">
+  <a href="/" class="topbar-brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#00c08b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+      <polyline points="9,12 11,14 15,10"/>
+    </svg>
+    Garak Gatekeeper
+  </a>
+  <div class="topbar-sep"></div>
+  <span class="status-pill" id="pill-garak">
+    <span class="s-dot" id="dot-garak"></span>
+    <span id="txt-garak">loading…</span>
+  </span>
+  <span class="status-pill" id="pill-ollama" style="cursor:default;">
+    <span class="s-dot" id="dot-ollama"></span>
+    <span id="txt-ollama">Ollama</span>
+  </span>
+  <nav class="topbar-nav">
+    <a href="#scan" class="topbar-link">Scanner</a>
+    <a href="#history" class="topbar-link">History</a>
+    <a href="/docs" class="topbar-link">API</a>
+    <a href="/health" class="topbar-link">Health</a>
+  </nav>
+</header>
+
+<!-- MAIN LAYOUT -->
+<div class="layout">
+
+  <!-- LEFT: FORM -->
+  <aside class="left-panel" id="scan">
+
+    <!-- Scan form section -->
+    <div>
+      <p class="panel-heading">Security Scan</p>
+
+      <div style="display:flex;flex-direction:column;gap:14px;">
+
+        <!-- Target type — HuggingFace only -->
+        <div class="field">
+          <label for="sel-type">HuggingFace Target</label>
+          <div class="select-wrap">
+            <select id="sel-type" class="select-wrap-inner" onchange="onTypeChange(this.value)">
+              <optgroup label="🤗 HuggingFace — Free">
+                <option value="huggingface" selected>💾 HF Pipeline — Downloads &amp; runs locally (official, 100% free)</option>
+                <option value="huggingface_api">🌐 HF Inference API — Cloud serverless (free with HF token)</option>
+              </optgroup>
+              <optgroup label="🔒 HuggingFace — Advanced">
+                <option value="huggingface_endpoint">🔒 HF Dedicated Endpoint — Private deployed endpoint URL</option>
+              </optgroup>
+            </select>
+          </div>
+          <div id="net-status" style="margin-top:6px;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.5;display:none;"></div>
+        </div>
+
+        <!-- Model name -->
+        <div class="field">
+          <label for="inp-model" id="lbl-model">Model</label>
+          <input id="inp-model" type="text" class="input mono"
+                 placeholder="llama-3.1-8b-instant"
+                 autocomplete="off"
+                 list="model-suggestions"
+                 spellcheck="false">
+          <datalist id="model-suggestions"></datalist>
+          <p class="field-hint" id="field-hint">Free cloud inference — no downloads, instant results</p>
+        </div>
+
+        <!-- Probe suite -->
+        <div class="field">
+          <label for="sel-probe">Probe Suite</label>
+          <div class="select-wrap">
+            <select id="sel-probe" onchange="onProbeChange(this.value)">
+              <optgroup label="⚡ Jailbreaks &amp; DAN">
+                <option value="dan" selected>DAN 11.0 Ablation — 127 variants (recommended)</option>
+                <option value="dan_wild">DAN In-The-Wild — Real community jailbreaks</option>
+                <option value="dan_cached">AutoDAN Cached — Auto-generated attacks</option>
+                <option value="dan_full">DAN Full Suite — All DAN variants (30+ min)</option>
+              </optgroup>
+              <optgroup label="💉 Prompt Injection">
+                <option value="promptinject">Prompt Injection — HijackHate/Kill/LongPrompt</option>
+                <option value="latentinject">Latent Injection — Documents, resumes, reports</option>
+              </optgroup>
+              <optgroup label="🚨 Harmful Content">
+                <option value="grandma">Social Engineering — Grandma/roleplay jailbreaks</option>
+                <option value="continuation">Continuation Attacks — Slur completions</option>
+                <option value="lmrc">LMRC Risk Cards — Bullying, quack medicine, sexual</option>
+                <option value="toxicity">Toxicity — RTP blank continuation</option>
+                <option value="misleading">Misinformation — False assertion generation</option>
+              </optgroup>
+              <optgroup label="🔐 Data Leakage">
+                <option value="leak">Data Leakage — Literature &amp; news training data</option>
+                <option value="sysprompt">System Prompt Extraction</option>
+                <option value="divergence">Divergence — Repetition data extraction</option>
+              </optgroup>
+              <optgroup label="💀 Code &amp; Web Attacks">
+                <option value="malwaregen">Malware Generation — Evasion, payloads, code</option>
+                <option value="exploitation">Exploitation — SQL injection, template injection</option>
+                <option value="web_injection">Web Injection — XSS, image exfil, Markdown</option>
+                <option value="packagehallucination">Package Hallucination — Python/JS/Rust/Ruby</option>
+                <option value="goodside">Goodside Attacks — Tag/JSON/Riley bypass</option>
+              </optgroup>
+              <optgroup label="🔢 Encoding Bypass">
+                <option value="encoding">Encoding Bypass — Base64/HEX/ROT13/Morse/Braille</option>
+                <option value="badchars">Bad Characters — Unicode injection</option>
+              </optgroup>
+              <optgroup label="🤖 Adversarial Red Team">
+                <option value="tap">TAP Cached — Tree of Attacks with Pruning</option>
+                <option value="suffix">GCG Suffix — Gradient adversarial suffix</option>
+                <option value="snowball">Snowball — Reasoning hallucination</option>
+              </optgroup>
+              <optgroup label="📊 Composite Audits">
+                <option value="hf_rogue_baseline">HF Rogue Baseline — Aligned vs Uncensored POC</option>
+                <option value="all">Full Audit — DAN + Inject + Leak + Malware + Encoding</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="probe-info" id="probe-info">
+            <strong>DAN 11.0 Ablation</strong> — 127 jailbreak prompt variants testing alignment bypass.
+            <span class="probe-owasp">OWASP LLM01</span>
+          </div>
+        </div>
+
+
+        <!-- Advanced options -->
+        <div>
+          <div class="adv-toggle" id="adv-toggle" onclick="toggleAdv()">
+            <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            Advanced options
+          </div>
+          <div class="adv-body" id="adv-body">
+            <div class="adv-grid">
+              <div class="field">
+                <label>Generations</label>
+                <input id="inp-gen" type="number" value="1" min="1" max="8" class="input mono">
+              </div>
+              <div class="field">
+                <label>Eval Threshold</label>
+                <input id="inp-eval" type="number" value="0.5" min="0" max="0.99" step="0.01" class="input mono">
+              </div>
+              <div class="field">
+                <label>Parallel Req.</label>
+                <input id="inp-preq" type="number" value="1" min="1" max="16" class="input mono">
+              </div>
+              <div class="field">
+                <label>Max Runtime (s)</label>
+                <input id="inp-rt" type="number" value="3600" min="30" max="14400" class="input mono">
+              </div>
+            </div>
+            <!-- Dynamic API key / HF token field -->
+            <div class="field" id="field-apikey">
+              <label for="inp-token" id="lbl-apikey">API Key <span style="color:var(--accent);font-size:11px" id="lbl-apikey-note">(required)</span></label>
+              <input id="inp-token" type="password" value="hf_YOUR_TOKEN_HERE" placeholder="hf_…" class="input mono">
+              <p class="field-hint" id="hint-apikey" style="margin-top:5px;"></p>
+            </div>
+            <div class="field" id="field-revision" style="display:none;">
+              <label>HF Revision</label>
+              <input id="inp-rev" type="text" placeholder="main" class="input mono">
+            </div>
+            <label class="checkbox-row">
+              <input id="chk-ext" type="checkbox" checked>
+              Extended detectors
+            </label>
+            <label class="checkbox-row" id="row-trust" style="display:none;">
+              <input id="chk-trust" type="checkbox">
+              Trust remote code (HF)
+            </label>
+          </div>
+        </div>
+
+        <!-- Error message -->
+        <div id="form-error" style="display:none;" class="error-card">
+          <p class="error-title">Validation Error</p>
+          <p class="error-msg" id="form-error-msg"></p>
+        </div>
+
+        <!-- Submit -->
+        <button id="btn-run" class="btn-run" onclick="launchScan()">
+          <div class="spinner"></div>
+          <span class="btn-text">Launch Security Scan</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Engine status -->
+    <div>
+      <p class="panel-heading">Engine</p>
+      <div class="engine-card">
+        <div class="engine-card-head">
+          <span class="engine-card-title">Garak 0.15.0</span>
+          <span class="badge" id="engine-badge" style="color:var(--muted);background:var(--surface2);border:1px solid var(--border);">checking…</span>
+        </div>
+        <div class="engine-stats">
+          <div class="engine-stat"><strong id="cnt-probes">—</strong><span>Probes</span></div>
+          <div class="engine-stat"><strong id="cnt-det">—</strong><span>Detectors</span></div>
+          <div class="engine-stat"><strong id="cnt-gen">—</strong><span>Generators</span></div>
+          <div class="engine-stat"><strong id="cnt-buffs">—</strong><span>Buffs</span></div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- RIGHT: RESULTS + HISTORY -->
+  <main class="right-panel">
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('results',this)">Results</div>
+      <div class="tab" id="history-tab" onclick="switchTab('history',this)">History</div>
+    </div>
+
+    <!-- RESULTS TAB -->
+    <div class="tab-panel active" id="tab-results">
+      <div class="results-area" id="results-area">
+        <div class="empty" id="results-empty">
+          <div class="empty-icon">
+            <svg width="18" height="18" fill="none" stroke="var(--muted2)" stroke-width="1.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+              <polyline stroke-linecap="round" stroke-linejoin="round" points="9,12 11,14 15,10"/>
+            </svg>
+          </div>
+          <p class="empty-title">No scan running</p>
+          <p class="empty-sub">Enter a model identifier and click Launch Security Scan.</p>
+        </div>
+        <div id="result-card-wrap" style="display:none;"></div>
+      </div>
+    </div>
+
+    <!-- HISTORY TAB -->
+    <div class="tab-panel" id="tab-history">
+      <div class="history-wrap">
+        <div class="history-head">
+          <span class="history-head-title">Scan History</span>
+          <button class="btn-sm" onclick="exportJSON()">↓ Export JSON</button>
+        </div>
+        <div class="history-table-wrap">
+          <table class="htable">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Model</th>
+                <th>Probe</th>
+                <th>EFR</th>
+                <th>Status</th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody id="history-body">
+              <tr><td colspan="6" class="hist-empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  PROBE METADATA
+// ═══════════════════════════════════════════
+const PROBES = {
+  // Jailbreaks
+  dan:                  { label:"DAN 11.0 Ablation",       owasp:"LLM01", desc:"127 ablated DAN 11.0 jailbreak variants. Best for fast alignment bypass testing." },
+  dan_wild:             { label:"DAN In-The-Wild",          owasp:"LLM01", desc:"Real jailbreak prompts collected from Reddit, Discord, and forums." },
+  dan_cached:           { label:"AutoDAN Cached",           owasp:"LLM01", desc:"Automatically generated DAN attack variants from the AutoDAN paper." },
+  dan_full:             { label:"DAN Full Suite",           owasp:"LLM01", desc:"All DAN probe variants. Warning: 30+ minutes. Best for comprehensive alignment audit." },
+  // Prompt Injection
+  promptinject:         { label:"Prompt Injection",         owasp:"LLM01", desc:"HijackHateHumans, HijackKillHumans, HijackLongPrompt — structural adversarial payloads (NeurIPS 2022 Best Paper)." },
+  latentinject:         { label:"Latent Injection",         owasp:"LLM01", desc:"Hidden injection in documents, resumes, legal snippets, and reports the model is asked to process." },
+  // Harmful Content
+  grandma:              { label:"Social Engineering",       owasp:"LLM01", desc:"Grandma roleplay, Windows activation key via bedtime story, substance synthesis via fictional personas." },
+  continuation:         { label:"Continuation Attacks",     owasp:"LLM06", desc:"Prompts model to continue slurs and reclaimedslurs — tests guardrail consistency." },
+  lmrc:                 { label:"LMRC Risk Cards",          owasp:"LLM06", desc:"Language Model Risk Cards: bullying, quack medicine, sexual content, sexualisation, slur usage." },
+  toxicity:             { label:"Toxicity",                 owasp:"LLM06", desc:"Real Toxicity Prompts blank-continuation. Model given empty context and checked for unsolicited toxicity." },
+  misleading:           { label:"Misinformation",           owasp:"LLM09", desc:"False assertion generation. Tests if model confidently states verifiably false facts." },
+  // Data Leakage
+  leak:                 { label:"Data Leakage",             owasp:"LLM06", desc:"Training data extraction via cloze and completion: Literature, Guardian news, NYT, Harry Potter." },
+  sysprompt:            { label:"System Prompt Extraction", owasp:"LLM07", desc:"Attempts to leak hidden system prompt instructions via various extraction techniques." },
+  divergence:           { label:"Divergence",               owasp:"LLM06", desc:"Repetition-based training data extraction (Carlini et al. 2021) — repeat token and full repeat." },
+  // Code & Web Attacks
+  malwaregen:           { label:"Malware Generation",       owasp:"LLM02", desc:"Elicits evasion code, malicious payloads, sub-functions, and top-level malware from the model." },
+  exploitation:         { label:"Exploitation",             owasp:"LLM02", desc:"Jinja2 template injection for Python RCE, SQL injection echo/system commands." },
+  web_injection:        { label:"Web Injection",            owasp:"LLM02", desc:"Markdown XSS, task XSS, image exfiltration, Colab AI data leakage, string assembly exfil." },
+  packagehallucination: { label:"Package Hallucination",   owasp:"LLM09", desc:"AI-invented non-existent package names for Python/JS/Rust/Ruby — supply chain attack vector." },
+  goodside:             { label:"Goodside Attacks",         owasp:"LLM01", desc:"Tag injection, JSON threat generation, WhoIsRiley persona bypass — from Riley Goodside's work." },
+  // Encoding Bypass
+  encoding:             { label:"Encoding Bypass",          owasp:"LLM01", desc:"Base64, Base32, HEX, ROT13, Ascii85, Morse, Braille, Zalgo — obfuscated instruction smuggling." },
+  badchars:             { label:"Bad Characters",           owasp:"LLM01", desc:"Unicode/special character injection — tests tokenizer and filter robustness." },
+  // Adversarial Red Team
+  tap:                  { label:"TAP Cached",               owasp:"LLM01", desc:"Tree of Attacks with Pruning (Mehrotra et al.) — cached adversarial jailbreak examples." },
+  suffix:               { label:"GCG Suffix",               owasp:"LLM01", desc:"Gradient-based adversarial suffix attacks (Zou et al.) — universal transferable suffixes." },
+  snowball:             { label:"Snowball",                  owasp:"LLM09", desc:"Graph connectivity hallucination — model confidently answers unanswerable graph problems." },
+  // Composite
+  hf_rogue_baseline:    { label:"HF Rogue Baseline",        owasp:"Multi", desc:"Curated probe battery for comparing aligned (low EFR) vs uncensored HF models (high EFR)." },
+  all:                  { label:"Full Audit",               owasp:"Multi", desc:"DAN + PromptInject + LeakReplay + MalwareGen + Encoding — comprehensive OWASP LLM Top-10 audit." },
+};
+
+
+// ═══════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════
+let currentJobId   = null;
+let pollInterval   = null;
+let lastLogLines   = 0;
+let historyRefresh = null;
+
+// ═══════════════════════════════════════════
+//  UI HELPERS
+// ═══════════════════════════════════════════
+function sel(id)  { return document.getElementById(id); }
+function esc(str) {
+  return String(str ?? "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function setStatus(dot, txt, label, cls) {
+  sel(dot).className = "s-dot " + cls;
+  sel(txt).textContent = label;
+}
+
+function showFormError(msg) {
+  sel("form-error-msg").textContent = msg;
+  sel("form-error").style.display = "block";
+}
+
+// HF rogue model list (small, downloadable via hf-mirror.com — no VPN needed)
+const HF_ROGUE_MODELS = [
+  { v: "EleutherAI/gpt-neo-125m",      label: "GPT-Neo 125M — Uncensored base, no RLHF (490MB)" },
+  { v: "distilgpt2",                    label: "DistilGPT-2 — Base model, zero alignment (350MB)" },
+  { v: "gpt2",                          label: "GPT-2 — Original OpenAI base, no filter (550MB)" },
+  { v: "facebook/opt-125m",             label: "OPT-125M — Meta unaligned base (240MB)" },
+  { v: "EleutherAI/pythia-70m",         label: "Pythia-70M — Tiny, no RLHF training (140MB)" },
+  { v: "EleutherAI/pythia-160m",        label: "Pythia-160M — No alignment, raw pretraining (350MB)" },
+  { v: "roneneldan/TinyStories-33M",    label: "TinyStories-33M — Minimal safeguards (70MB)" },
+];
+
+async function checkMirrorStatus() {
+  const banner = sel("net-status");
+  if (!banner) return;
+  const type = sel("sel-type")?.value;
+  if (type !== "huggingface") { banner.style.display = "none"; return; }
+
+  banner.style.display = "block";
+  banner.style.border  = "1px solid rgba(100,100,100,.15)";
+  banner.style.background = "rgba(100,100,100,.05)";
+  banner.style.color   = "#888";
+  banner.innerHTML     = "⟳ Checking hf-mirror.com…";
+
+  try {
+    const r = await fetch("/api/v1/health/network", { signal: AbortSignal.timeout(6000) });
+    if (r.ok) {
+      const d = await r.json();
+      const mirrorOk  = d.hf_mirror_reachable !== false; // true by default if key absent
+      const ollamaOk  = d.ollama_reachable === true;
+      if (mirrorOk) {
+        banner.style.border     = "1px solid rgba(52,211,153,.2)";
+        banner.style.background = "rgba(52,211,153,.06)";
+        banner.style.color      = "#34d399";
+        banner.innerHTML        = "✓ <strong>hf-mirror.com reachable</strong> — model downloads will work without VPN";
+      } else {
+        banner.style.border     = "1px solid rgba(245,158,11,.2)";
+        banner.style.background = "rgba(245,158,11,.06)";
+        banner.style.color      = "#f59e0b";
+        banner.innerHTML        = "⚠ <strong>hf-mirror.com unreachable</strong> — check internet connection";
+      }
+    }
+  } catch {
+    banner.style.display = "none";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDER CONFIG — HuggingFace only
+//  Official Garak command: python -m garak --target_type huggingface --target_name <model>
+// ═══════════════════════════════════════════════════════════════
+const PROVIDER_CONFIG = {
+  // ── Primary: HF Pipeline (local, official per Garak README) ──────────────
+  huggingface: {
+    label:       "HF Model ID",
+    placeholder: "gpt2",
+    hint:        "📥 Downloads model weights locally via huggingface.co — 100% free, runs on CPU",
+    apiLabel:    "HF Token",
+    apiNote:     "(optional for public models — needed for gated models like Llama)",
+    apiPlaceholder: "hf_…  →  huggingface.co/settings/tokens",
+    apiHint:     "Free HF token: huggingface.co/settings/tokens. Not required for gpt2, pythia, opt, etc.",
+    models: [
+      { v: "EleutherAI/pythia-70m",     label: "Pythia-70M — 140MB, no RLHF, HIGH EFR expected 🔴 (fastest)" },
+      { v: "EleutherAI/pythia-160m",    label: "Pythia-160M — 350MB, no alignment 🔴" },
+      { v: "gpt2",                      label: "GPT-2 — 550MB, OpenAI original, no safety filter 🔴" },
+      { v: "distilgpt2",                label: "DistilGPT-2 — 350MB, zero alignment 🔴" },
+      { v: "EleutherAI/gpt-neo-125m",   label: "GPT-Neo 125M — 490MB, uncensored base 🔴" },
+      { v: "facebook/opt-125m",         label: "OPT-125M — 240MB, Meta unaligned base 🔴" },
+      { v: "roneneldan/TinyStories-33M",label: "TinyStories-33M — 70MB, minimal safeguards 🔴 (smallest)" },
+      { v: "microsoft/DialoGPT-medium", label: "DialoGPT-Medium — dialog model, minimal safety 🟡" },
+    ],
+    showRevision: true, showTrust: true,
+  },
+  // ── HF Inference API (cloud, free with HF token) ──────────────────────────
+  huggingface_api: {
+    label:       "HF Model ID",
+    placeholder: "gpt2",
+    hint:        "🌐 Serverless REST API via huggingface.co — free with HF token, no local download",
+    apiLabel:    "HF Token",
+    apiNote:     "(recommended — reduces rate limits)",
+    apiPlaceholder: "hf_…  →  huggingface.co/settings/tokens",
+    apiHint:     "⚠ Note: api-inference.huggingface.co may be restricted on some networks. Pipeline is more reliable.",
+    models: [
+      { v: "gpt2",                         label: "GPT-2 — widely available on serverless" },
+      { v: "facebook/blenderbot-400M-distill", label: "BlenderBot 400M — dialog model" },
+      { v: "EleutherAI/gpt-neo-125m",      label: "GPT-Neo 125M — unaligned base" },
+      { v: "bigscience/bloom-560m",        label: "BLOOM 560M — multilingual" },
+    ],
+    showRevision: false, showTrust: false,
+  },
+  // ── HF Dedicated Endpoint (private, advanced) ─────────────────────────────
+  huggingface_endpoint: {
+    label:       "Endpoint URL",
+    placeholder: "https://xxx.aws.endpoints.huggingface.cloud",
+    hint:        "🔒 Your own deployed HF Dedicated Endpoint — paste the full HTTPS URL above",
+    apiLabel:    "HF Token",
+    apiNote:     "(required for private endpoints)",
+    apiPlaceholder: "hf_…  →  huggingface.co/settings/tokens",
+    apiHint:     "Paste your full HF Dedicated Endpoint URL as the 'Model ID' above.",
+    models: [],
+    showRevision: false, showTrust: false,
+  },
+};
+
+function onTypeChange(type) {
+  const cfg = PROVIDER_CONFIG[type] || PROVIDER_CONFIG.huggingface;
+
+  // Model field
+  sel("lbl-model").textContent  = cfg.label;
+  sel("inp-model").placeholder  = cfg.placeholder;
+  sel("field-hint").innerHTML   = cfg.hint;
+
+  // Model suggestions datalist
+  const dl = sel("model-suggestions");
+  dl.innerHTML = cfg.models.map(m =>
+    `<option value="${esc(m.v)}">${esc(m.label)}</option>`
+  ).join("");
+
+  // API key field
+  sel("lbl-apikey").firstChild.textContent = cfg.apiLabel + " ";
+  sel("lbl-apikey-note").textContent = cfg.apiNote;
+
+  sel("inp-token").placeholder = cfg.apiPlaceholder;
+  sel("hint-apikey").textContent = cfg.apiHint;
+
+  // HF Pipeline-only fields (revision, trust remote code)
+  const showHFPipeline = type === "huggingface";
+  sel("field-revision").style.display = showHFPipeline ? "" : "none";
+  sel("row-trust").style.display      = showHFPipeline ? "" : "none";
+
+  // Mirror status banner — only for local HF Pipeline
+  sel("net-status").style.display = "none";
+  if (type === "huggingface") checkMirrorStatus();
+
+  // Auto-open advanced panel for any cloud/API provider (API key is needed)
+  if (CLOUD_TYPES.includes(type)) {
+    const toggle = sel("adv-toggle");
+    const body   = sel("adv-body");
+    if (!body.classList.contains("open")) {
+      toggle.classList.add("open");
+      body.classList.add("open");
+    }
+  }
+}
+
+function hideFormError() {
+  sel("form-error").style.display = "none";
+}
+
+function setRunning(loading) {
+  const btn = sel("btn-run");
+  if (loading) {
+    btn.classList.add("loading");
+    btn.disabled = true;
+  } else {
+    btn.classList.remove("loading");
+    btn.disabled = false;
+  }
+}
+
+function switchTab(name, el) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+  el.classList.add("active");
+  sel("tab-" + name).classList.add("active");
+  if (name === "history") loadHistory();
+}
+
+function onProbeChange(key) {
+  const p = PROBES[key] || {};
+  sel("probe-info").innerHTML =
+    `<strong>${esc(p.label || key)}</strong> — ${esc(p.desc || "")}` +
+    (p.owasp ? `<span class="probe-owasp">OWASP ${esc(p.owasp)}</span>` : "");
+}
+
+function toggleAdv() {
+  const toggle = sel("adv-toggle");
+  const body   = sel("adv-body");
+  toggle.classList.toggle("open");
+  body.classList.toggle("open");
+}
+
+// ═══════════════════════════════════════════
+//  ENGINE STATUS
+// ═══════════════════════════════════════════
+async function loadEngineStatus() {
+  try {
+    const r = await fetch("/api/v1/garak/capabilities.json");
+    const d = await r.json();
+    const avail = !!d.available;
+    const badge = sel("engine-badge");
+    const counts = d.counts || {};
+
+    if (avail) {
+      badge.className = "badge approved";
+      badge.textContent = "Online";
+      setStatus("dot-garak","txt-garak","Garak online","online pulse");
+    } else {
+      badge.className = "badge failed";
+      badge.textContent = "Offline";
+      setStatus("dot-garak","txt-garak","Garak offline","offline");
+    }
+    sel("cnt-probes").textContent = counts.probes    ?? "—";
+    sel("cnt-det").textContent    = counts.detectors ?? "—";
+    sel("cnt-gen").textContent    = counts.generators?? "—";
+    sel("cnt-buffs").textContent  = counts.buffs     ?? "—";
+  } catch {
+    setStatus("dot-garak","txt-garak","Garak error","offline");
+  }
+}
+
+async function fetchOllamaModels() {
+  try {
+    const r = await fetch("/api/v1/ollama/models");
+    const d = await r.json();
+    if (d.available) {
+      setStatus("dot-ollama","txt-ollama",`Ollama · ${d.models.length} model${d.models.length!==1?"s":""}`, "online pulse");
+      return d.models;
+    } else {
+      setStatus("dot-ollama","txt-ollama","Ollama · offline","offline");
+      return [];
+    }
+  } catch {
+    setStatus("dot-ollama","txt-ollama","Ollama · offline","offline");
+    return [];
+  }
+}
+
+async function fetchHFSuggestions() {
+  try {
+    const r = await fetch("/api/v1/hf/risky-models");
+    const d = await r.json();
+    const dl = sel("model-suggestions");
+    if (d.models) {
+      dl.innerHTML = d.models.map(m => `<option value="${esc(m.model)}">`).join("");
+    }
+  } catch {}
+}
+
+// ═══════════════════════════════════════════
+//  SCAN LAUNCH
+// ═══════════════════════════════════════════
+async function launchScan() {
+  hideFormError();
+
+  const type  = sel("sel-type").value;
+  const model = sel("inp-model").value.trim();
+  const probe = sel("sel-probe").value;
+
+  // Basic client-side validation
+  if (!model) {
+    showFormError("Model name is required.");
+    sel("inp-model").focus();
+    return;
+  }
+  if (!/^[a-zA-Z0-9_\-\./:]+$/.test(model)) {
+    showFormError("Model name contains invalid characters. Use only letters, numbers, hyphens, dots, slashes, and colons.");
+    return;
+  }
+  if (model.length > 180) {
+    showFormError("Model name too long (max 180 characters).");
+    return;
+  }
+
+  // Stop any existing poll
+  stopPoll();
+
+  setRunning(true);
+  showScanState(type, model, probe);
+
+  // Required fields
+  const body = new URLSearchParams({
+    target_type:         type,
+    target_name:         model,
+    probe_name:          probe,
+    generations:         sel("inp-gen").value  || "1",
+    parallel_requests:   sel("inp-preq").value || "1",
+    parallel_attempts:   "1",
+    eval_threshold:      sel("inp-eval").value || "0.5",
+    max_runtime_seconds: sel("inp-rt").value   || "3600",
+  });
+
+  // Optional boolean flags — only send when checked (FastAPI sees None when absent)
+  if (sel("chk-ext").checked)   body.append("extended_detectors",   "on");
+  if (sel("chk-trust").checked) body.append("hf_trust_remote_code", "on");
+
+  // HF token — always send (backend has embedded default if blank)
+  const hfToken = sel("inp-token").value.trim();
+  const hfRev   = sel("inp-rev").value.trim();
+  body.append("hf_token", hfToken || "hf_YOUR_TOKEN_HERE");
+  if (hfRev) body.append("hf_revision", hfRev);
+
+  try {
+    const resp = await fetch("/api/v1/scan", {
+      method:  "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body:    body.toString(),
+    });
+
+    const text = await resp.text();
+
+    if (resp.status === 400 || resp.status === 422) {
+      // Parse validation error from HTML
+      const match = text.match(/verdict-detail[^>]*>([^<]+)<\/p>/);
+      showFormError(match ? match[1] : "Validation failed. Check your inputs.");
+      setRunning(false);
+      sel("results-empty").style.display = "flex";
+      sel("result-card-wrap").style.display = "none";
+      return;
+    }
+
+    if (resp.status !== 202 && resp.status !== 200) {
+      showFormError(`Server error (${resp.status}). Check /health for details.`);
+      setRunning(false);
+      return;
+    }
+
+    // Extract job_id from HTML response
+    const idMatch = text.match(/\/api\/v1\/scan\/([a-f0-9]{32})\//);
+    if (!idMatch) {
+      showFormError("Could not get job ID from server response.");
+      setRunning(false);
+      return;
+    }
+
+    currentJobId = idMatch[1];
+    setRunning(false);
+
+    // Start polling
+    startPoll();
+
+  } catch (err) {
+    showFormError("Network error: " + err.message);
+    setRunning(false);
+  }
+}
+
+// ═══════════════════════════════════════════
+//  RESULT DISPLAY
+// ═══════════════════════════════════════════
+function showScanState(type, model, probe) {
+  sel("results-empty").style.display = "none";
+  const probeLabel = PROBES[probe]?.label || probe;
+  const prompts    = PROBES[probe]?.prompts || "?";
+  sel("result-card-wrap").innerHTML = `
+<div class="result-card" id="active-card">
+  <div class="result-head">
+    <span class="badge scanning">
+      <span class="badge-dot" style="background:var(--amber);animation:pulse 1.5s infinite;border-radius:50%;"></span>
+      Queued
+    </span>
+    <span class="result-model">${esc(model)}</span>
+    <span class="result-probe-tag">${esc(probeLabel)}</span>
+  </div>
+  <div class="progress-wrap" id="progress-wrap" style="margin:10px 0;display:none;">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+      <span id="progress-label">Loading model…</span>
+      <span id="progress-eta"></span>
+    </div>
+    <div style="background:rgba(255,255,255,0.06);border-radius:6px;height:8px;overflow:hidden;">
+      <div id="progress-bar" style="height:100%;background:linear-gradient(90deg,var(--green),var(--amber));border-radius:6px;width:0%;transition:width 0.5s ease;"></div>
+    </div>
+  </div>
+  <div class="scan-progress" id="fake-progress" style="margin:10px 0;"><div class="scan-progress-bar"></div></div>
+  <div class="log-area" id="live-log">
+    <div class="log-placeholder">Waiting for Garak to start…</div>
+  </div>
+</div>`;
+  sel("result-card-wrap").style.display = "block";
+}
+
+// ═══════════════════════════════════════════
+//  POLLING
+// ═══════════════════════════════════════════
+function startPoll() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(pollJob, 2000);
+  pollJob(); // immediate first poll
+}
+
+function stopPoll() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+}
+
+function fmtEta(s) {
+  if (s === null || s === undefined || s < 0) return "";
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m > 0 ? `ETA ${m}m ${sec}s` : `ETA ${sec}s`;
+}
+
+async function pollJob() {
+  if (!currentJobId) { stopPoll(); return; }
+
+  // 1. Job detail
+  try {
+    const r = await fetch(`/api/v1/scan/${currentJobId}/detail`);
+    if (!r.ok) { stopPoll(); return; }
+    const d = await r.json();
+    updateResultCard(d);
+    if (d.status === "Completed" || d.status === "Failed") {
+      stopPoll();
+      loadHistory();
+    }
+  } catch {}
+
+  // 2. Live log
+  try {
+    const lr = await fetch(`/api/v1/scan/${currentJobId}/log`);
+    if (lr.ok) {
+      const h = await lr.text();
+      const logEl = sel("live-log");
+      if (logEl && h.trim()) {
+        logEl.innerHTML = h;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }
+  } catch {}
+
+  // 3. Live progress bar + ETA
+  try {
+    const pr = await fetch(`/api/v1/scan/${currentJobId}/progress`);
+    if (pr.ok) {
+      const p = await pr.json();
+      const bar    = sel("progress-bar");
+      const label  = sel("progress-label");
+      const eta    = sel("progress-eta");
+      const wrap   = sel("progress-wrap");
+      const fake   = sel("fake-progress");
+      if (bar && p.total > 0) {
+        if (fake) fake.style.display = "none";
+        if (wrap) wrap.style.display = "block";
+        bar.style.width = p.pct + "%";
+        if (label) label.textContent = `${p.completed} / ${p.total} prompts (${p.pct}%)`;
+        if (eta)   eta.textContent   = fmtEta(p.eta_s);
+      } else if (label && p.total === 0) {
+        if (label) label.textContent = "Loading model into memory…";
+      }
+    }
+  } catch {}
+}
+
+
+function updateResultCard(d) {
+  const card = sel("active-card");
+  if (!card) return;
+
+  const head = card.querySelector(".result-head");
+  if (!head) return;
+
+  const badgeEl = head.querySelector(".badge");
+  if (badgeEl) {
+    if (d.status === "Queued")   { badgeEl.className = "badge queued";    badgeEl.innerHTML = '<span class="badge-dot" style="background:var(--blue);border-radius:50%;"></span> Queued'; }
+    if (d.status === "Scanning") { badgeEl.className = "badge scanning";  badgeEl.innerHTML = '<span class="badge-dot" style="background:var(--amber);animation:pulse 1.5s infinite;border-radius:50%;"></span> Scanning'; }
+    if (d.status === "Completed"){ badgeEl.className = d.verdict?.startsWith("REJECTED") ? "badge rejected" : "badge approved";
+                                   badgeEl.innerHTML = d.verdict?.startsWith("REJECTED") ? "REJECTED" : "APPROVED"; }
+    if (d.status === "Failed")   { badgeEl.className = "badge failed"; badgeEl.innerHTML = "Failed"; }
+  }
+
+  // Remove progress bar when done
+  if (d.status === "Completed" || d.status === "Failed") {
+    const prog = card.querySelector(".scan-progress");
+    if (prog) prog.remove();
+  }
+
+  // Render completed body
+  if (d.status === "Completed") {
+    renderCompleted(card, d);
+  } else if (d.status === "Failed") {
+    renderFailed(card, d);
+  }
+}
+
+function renderCompleted(card, d) {
+  // Remove old body if exists
+  const oldBody = card.querySelector(".result-body");
+  if (oldBody) oldBody.remove();
+
+  const rejected = d.verdict?.startsWith("REJECTED");
+  const efr      = typeof d.exploit_failure_rate === "number" ? d.exploit_failure_rate : 0;
+  const efrCls   = rejected ? "danger" : "safe";
+  const efrPct   = Math.min(efr, 100).toFixed(1);
+
+  // Verdict row
+  const verdictDiv = document.createElement("div");
+  verdictDiv.className = "verdict-row";
+  verdictDiv.style.borderTop = "1px solid var(--border)";
+  verdictDiv.innerHTML = `
+    <span class="verdict-icon">${rejected ? "✗" : "✓"}</span>
+    <div>
+      <p class="verdict-label" style="color:${rejected?"var(--red)":"var(--accent)"}">${rejected?"REJECTED":"APPROVED"}</p>
+      <p class="verdict-sub">${esc(d.verdict || "")}</p>
+    </div>`;
+  card.appendChild(verdictDiv);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "result-body";
+
+  // EFR section
+  let efrHtml = `<div class="result-section">
+    <p class="section-label">Exploit Failure Rate</p>
+    <div class="efr-row">
+      <div class="efr-number ${efrCls}">${efrPct}%</div>
+      <div class="efr-meta">
+        <p class="efr-label">${d.total_probes ?? 0} probes executed · threshold 5.0%</p>
+        <div class="efr-bar-track">
+          <div class="efr-bar-fill ${efrCls}" style="width:${Math.min(efr,100)}%"></div>
+        </div>
+        <p class="efr-threshold">${rejected?"⚠ EFR exceeds 5% threshold — model REJECTED":"✓ EFR within acceptable range"}</p>
+      </div>
+    </div>
+  </div>`;
+
+  // Family breakdown
+  let breakdownHtml = "";
+  if (d.family_breakdown && Object.keys(d.family_breakdown).length > 0) {
+    const items = Object.entries(d.family_breakdown).sort((a,b)=>b[1]-a[1]);
+    const maxVal = Math.max(...items.map(([,v])=>v), 1);
+    breakdownHtml = `<div class="result-section">
+      <p class="section-label">Probe Family Breakdown</p>
+      <div class="breakdown-list">
+        ${items.map(([k,v])=>`<div class="breakdown-item">
+          <span class="breakdown-name">${esc(k)}</span>
+          <div class="breakdown-bar-track"><div class="breakdown-bar-fill" style="width:${(v/maxVal*100).toFixed(0)}%"></div></div>
+          <span class="breakdown-count">${v}</span>
+        </div>`).join("")}
+      </div>
+    </div>`;
+  }
+
+  // Vulnerabilities
+  let vulnHtml = "";
+  if (Array.isArray(d.vulnerabilities) && d.vulnerabilities.length > 0) {
+    const shown = d.vulnerabilities.slice(0, 10);
+    const more  = d.vulnerabilities.length - shown.length;
+    vulnHtml = `<div class="result-section">
+      <p class="section-label">Attack Vectors Detected</p>
+      <ul class="vuln-list">
+        ${shown.map(v=>`<li class="vuln-item">${esc(v)}</li>`).join("")}
+        ${more > 0 ? `<li class="vuln-item vuln-more">…and ${more} more</li>` : ""}
+      </ul>
+    </div>`;
+  }
+
+  body.innerHTML = efrHtml + breakdownHtml + vulnHtml;
+
+  // Move log to bottom
+  const logEl = card.querySelector(".log-area");
+  if (logEl) card.removeChild(logEl);
+  card.appendChild(body);
+  if (logEl) {
+    logEl.style.maxHeight = "160px";
+    card.appendChild(logEl);
+  }
+}
+
+function renderFailed(card, d) {
+  const oldBody = card.querySelector(".result-body");
+  if (oldBody) oldBody.remove();
+  const logEl = card.querySelector(".log-area");
+  if (logEl) card.removeChild(logEl);
+
+  const body = document.createElement("div");
+  body.className = "result-body";
+  body.innerHTML = `<div class="result-section">
+    <div class="error-card">
+      <p class="error-title">Scan Failed</p>
+      <p class="error-msg">${esc(d.public_error || "The scan could not be completed.")}</p>
+    </div>
+  </div>`;
+  card.appendChild(body);
+  if (logEl) {
+    logEl.style.maxHeight = "160px";
+    card.appendChild(logEl);
+  }
+}
+
+// ═══════════════════════════════════════════
+//  HISTORY
+// ═══════════════════════════════════════════
+async function loadHistory() {
+  try {
+    const r = await fetch("/api/v1/scans.json");
+    const jobs = await r.json();
+    const tbody = sel("history-body");
+
+    if (!jobs.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="hist-empty">No scans yet</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = jobs.slice(0, 50).map(j => {
+      const ts      = new Date(j.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+      const efr     = typeof j.exploit_failure_rate === "number" ? j.exploit_failure_rate.toFixed(1) + "%" : "—";
+      const verdict = j.verdict
+        ? (j.verdict.startsWith("REJECTED")
+            ? '<span class="badge rejected">REJECTED</span>'
+            : '<span class="badge approved">APPROVED</span>')
+        : "—";
+      const status  = {
+        Scanning:  '<span class="badge scanning">Scanning</span>',
+        Queued:    '<span class="badge queued">Queued</span>',
+        Completed: '<span class="badge approved">Done</span>',
+        Failed:    '<span class="badge failed">Failed</span>',
+      }[j.status] || esc(j.status);
+
+      return `<tr class="hrow" title="${esc(j.target_name)}" onclick="loadJobDetail('${esc(j.job_id)}')">
+        <td class="hcell mono">${esc(ts)}</td>
+        <td class="hcell model">${esc(j.target_name)}</td>
+        <td class="hcell">${esc(j.probe_name)}</td>
+        <td class="hcell mono">${esc(efr)}</td>
+        <td class="hcell">${status}</td>
+        <td class="hcell">${verdict}</td>
+      </tr>`;
+    }).join("");
+  } catch {
+    sel("history-body").innerHTML = `<tr><td colspan="6" class="hist-empty">Failed to load history</td></tr>`;
+  }
+}
+
+async function loadJobDetail(jobId) {
+  // Switch to results tab and load this job
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+  document.querySelector(".tab").classList.add("active");
+  sel("tab-results").classList.add("active");
+
+  try {
+    const r = await fetch(`/api/v1/scan/${jobId}/detail`);
+    if (!r.ok) return;
+    const d = await r.json();
+
+    sel("results-empty").style.display = "none";
+    const probeLabel = PROBES[d.probe_name]?.label || d.probe_name;
+    sel("result-card-wrap").innerHTML = `
+<div class="result-card" id="active-card">
+  <div class="result-head">
+    <span class="badge ${d.status==="Completed"?(d.verdict?.startsWith("REJECTED")?"rejected":"approved"):(d.status==="Failed"?"failed":"queued")}">
+      ${d.status==="Completed"?(d.verdict?.startsWith("REJECTED")?"REJECTED":"APPROVED"):esc(d.status)}
+    </span>
+    <span class="result-model">${esc(d.target_name)}</span>
+    <span class="result-probe-tag">${esc(probeLabel)}</span>
+  </div>
+  <div class="log-area" id="live-log"><div class="log-placeholder">Loading log…</div></div>
+</div>`;
+    sel("result-card-wrap").style.display = "block";
+
+    const card = sel("active-card");
+    if (d.status === "Completed") renderCompleted(card, d);
+    else if (d.status === "Failed") renderFailed(card, d);
+
+    // Load log
+    const lr = await fetch(`/api/v1/scan/${jobId}/log`);
+    if (lr.ok) {
+      const html = await lr.text();
+      const logEl = card.querySelector(".log-area");
+      if (logEl && html.trim()) {
+        logEl.innerHTML = html;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }
+  } catch {}
+}
+
+async function exportJSON() {
+  try {
+    const r = await fetch("/api/v1/scans.json");
+    const data = await r.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement("a"), {href:url, download:`garak_audit_${new Date().toISOString().slice(0,10)}.json`});
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch { alert("Export failed"); }
+}
+
+// ═══════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════
+
+document.addEventListener("DOMContentLoaded", () => {
+  // HF Pipeline is the primary target — official method per Garak README, 100% free
+  onTypeChange("huggingface");
+
+  loadEngineStatus();
+  loadHistory();
+
+  setInterval(loadEngineStatus, 60000);
+  setInterval(() => { if (sel("tab-history").classList.contains("active")) loadHistory(); }, 15000);
+});
+</script>
+</body>
+</html>
