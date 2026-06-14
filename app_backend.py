@@ -598,12 +598,11 @@ def _build_args(scan: ScanRequest, job_dir: Path) -> List[str]:
 def _garak_preflight(scan: ScanRequest, env: Dict[str, str]) -> Optional[str]:
     """Return None when runtime is healthy; return a clear error string otherwise.
 
-    Checks performed:
+    Checks:
     1. Garak importable in the configured Python runtime.
-    2. HF Pipeline → hf-mirror.com reachable.
-    3. HF InferenceAPI → api-inference.huggingface.co DNS resolves (blocked on some ISPs).
-    4. HF Router → router.huggingface.co DNS resolves + HF token present.
-    5. Ollama → local :11434 reachable.
+    2. HF Pipeline → huggingface.co is reachable over HTTPS.
+    3. HF Inference API → api-inference.huggingface.co DNS resolves + token present.
+    4. HF Dedicated Endpoint → URL must start with https:// + token present.
     """
     import socket
 
@@ -629,60 +628,51 @@ def _garak_preflight(scan: ScanRequest, env: Dict[str, str]) -> Optional[str]:
             )
         return "Garak module is not importable for the configured scan runtime."
 
-    # 2. HF Pipeline: verify hf-mirror.com reachable
+    # 2. HF Pipeline: verify huggingface.co is reachable
     if scan.target_type == "huggingface":
         import urllib.request as _ur
-        mirror = "https://hf-mirror.com"
         try:
-            with _ur.urlopen(f"{mirror}/api/models/distilgpt2", timeout=8) as r:
-                if r.status != 200:
+            with _ur.urlopen("https://huggingface.co/api/models/gpt2", timeout=8) as r:
+                if r.status not in (200, 301, 302):
                     return (
-                        f"HuggingFace mirror ({mirror}) returned HTTP {r.status}. "
-                        "Model downloads may fail. Try again shortly."
+                        f"huggingface.co returned HTTP {r.status}. "
+                        "Model downloads may fail — check your internet connection."
                     )
         except Exception as exc:
             return (
-                f"HuggingFace mirror ({mirror}) is not reachable: {exc}. "
+                f"huggingface.co is not reachable: {exc}. "
                 "Check your internet connection and try again."
             )
 
-    # 3. HF InferenceAPI: check domain reachable
+    # 3. HF Inference API: check domain reachable + token present
     elif scan.target_type == "huggingface_api":
+        hf_tok = (scan.hf_token or "").strip()
+        if not hf_tok:
+            return (
+                "HF Inference API requires a HuggingFace token. "
+                "Get a free token at huggingface.co/settings/tokens "
+                "and enter it in the API Key field."
+            )
         try:
             import socket
             socket.getaddrinfo("api-inference.huggingface.co", 443, socket.AF_INET)
         except OSError:
             return (
-                "api-inference.huggingface.co cannot be resolved on this network (DNS blocked). "
-                "Switch to 'HF Router' — router.huggingface.co is reachable and serves the same models "
-                "via an OpenAI-compatible API with your HF token."
+                "api-inference.huggingface.co cannot be resolved on this network. "
+                "Try switching to 'HF Pipeline' mode which downloads the model locally."
             )
 
-    # 4. HF Router: DNS check + token required
-    elif scan.target_type == "hf_router":
-        try:
-            import socket
-            socket.getaddrinfo("router.huggingface.co", 443, socket.AF_INET)
-        except OSError as exc:
-            return f"HuggingFace Router (router.huggingface.co) DNS failed: {exc}."
-        if not (scan.hf_token or "").strip():
+    # 4. HF Dedicated Endpoint: must be a valid HTTPS URL
+    elif scan.target_type == "huggingface_endpoint":
+        name = (scan.target_name or "").strip()
+        if not name.startswith("https://"):
             return (
-                "HF Router requires a HuggingFace token. "
-                "Get a free token at huggingface.co/settings/tokens and enter it in the API Key field."
+                "Dedicated endpoint URL must start with https://. "
+                "Example: https://xxx.aws.endpoints.huggingface.cloud"
             )
-
-    # 5. Ollama target: local API reachability check
-    elif scan.target_type == "ollama":
-        try:
-            import urllib.request as _req
-            with _req.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as r:
-                pass
-        except Exception:
-            return (
-                "Ollama API is not reachable at http://127.0.0.1:11434. "
-                "Make sure Ollama is running ('ollama serve') and has at least "
-                "one model pulled (e.g. 'ollama pull mistral')."
-            )
+        hf_tok = (scan.hf_token or "").strip()
+        if not hf_tok:
+            return "HF Dedicated Endpoint requires a HuggingFace token in the API Key field."
 
     return None
 
@@ -1358,9 +1348,8 @@ async def index(request: Request) -> HTMLResponse:
 
 @app.get("/api/v1/health/network")
 async def network_health() -> JSONResponse:
-    """Check reachability of required external services."""
-    import socket
-    import urllib.request
+    """Check reachability of external HF services."""
+    import socket, urllib.request
 
     def _dns(host: str) -> bool:
         try:
@@ -1369,59 +1358,26 @@ async def network_health() -> JSONResponse:
         except socket.gaierror:
             return False
 
-    # HF Serverless API (legacy — frequently DNS-blocked by ISPs)
-    hf_ok = _dns("api-inference.huggingface.co")
-
-    # HF Router (OpenAI-compatible, the RIGHT way to access HF models)
-    hf_router_ok = _dns("router.huggingface.co")
-
-    # HF Mirror (for local Pipeline downloads)
-    mirror_ok = False
+    # huggingface.co — needed for HF Pipeline model downloads
+    hf_ok = False
     try:
-        with urllib.request.urlopen(
-            "https://hf-mirror.com/api/models/distilgpt2", timeout=6
-        ) as r:
-            mirror_ok = (r.status == 200)
+        with urllib.request.urlopen("https://huggingface.co/api/models/gpt2", timeout=6) as r:
+            hf_ok = r.status in (200, 301, 302)
     except Exception:
-        mirror_ok = False
+        hf_ok = False
 
-    # Groq cloud (primary fast path)
-    groq_ok = _dns("api.groq.com")
+    # api-inference.huggingface.co — needed for HF Inference API
+    hf_api_ok = _dns("api-inference.huggingface.co")
 
-    # Ollama local
-    ollama_ok = False
-    try:
-        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=3) as r:
-            ollama_ok = (r.status == 200)
-    except Exception:
-        ollama_ok = False
-
-    # Smart recommendation: prefer no-download cloud APIs
-    if groq_ok:
-        rec = "groq"
-    elif hf_router_ok:
-        rec = "hf_router"
-    elif mirror_ok:
-        rec = "huggingface"
-    elif ollama_ok:
-        rec = "ollama"
-    else:
-        rec = "none"
+    rec = "huggingface" if hf_ok else ("huggingface_api" if hf_api_ok else "none")
 
     return JSONResponse({
-        "hf_inference_reachable":  hf_ok,
-        "hf_router_reachable":     hf_router_ok,
-        "hf_router_url":           "https://router.huggingface.co/hf-inference/v1",
-        "hf_mirror_reachable":     mirror_ok,
-        "hf_mirror_url":           "https://hf-mirror.com",
-        "groq_reachable":          groq_ok,
-        "ollama_reachable":        ollama_ok,
-        "ollama_url":              "http://127.0.0.1:11434",
-        "recommendation":          rec,
+        "hf_reachable":           hf_ok,
+        "hf_inference_reachable": hf_api_ok,
+        "recommendation":         rec,
         "network_notes": {
-            "hf_inference": "BLOCKED on many ISPs — use hf_router instead" if not hf_ok else "OK",
-            "hf_router":    "OK — use with HF token for any HF model" if hf_router_ok else "unreachable",
-            "hf_mirror":    "OK — model downloads via hf-mirror.com" if mirror_ok else "unreachable",
+            "huggingface":     "OK — downloads ready" if hf_ok else "unreachable — check internet",
+            "huggingface_api": "OK — serverless API available" if hf_api_ok else "DNS blocked on this network",
         },
     })
 

@@ -1,205 +1,235 @@
-# Garak Probes — AI Model Security Gatekeeper
+# Garak Probes — AI Security Gatekeeper
 
-> **Adversarial LLM security scanner with a web UI.** Runs [Garak](https://github.com/NVIDIA/garak) probes against Hugging Face models to detect jailbreaks, prompt injection, data leakage, and 20+ other vulnerability classes before a model reaches production.
-
-![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)
-![Garak](https://img.shields.io/badge/Garak-0.15.0-red)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green?logo=fastapi)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+> **Adversarial security scanning for Hugging Face LLMs**  
+> Powered by [NVIDIA Garak 0.15.0](https://github.com/NVIDIA/garak) · FastAPI · Python 3.13  
+> Last updated: June 2026
 
 ---
 
-## What It Does
+## Overview
 
-1. **Submit** a Hugging Face model ID via the web UI
-2. **Garak** downloads the model and runs adversarial probes (jailbreaks, injection, leakage, etc.)
-3. **Exploit Failure Rate (EFR)** is computed from the scan report
-4. **Verdict**: `EFR > 5%` → **REJECTED** (unsafe for production), otherwise **APPROVED**
+**Garak Probes** is a web-based AI security scanner that runs adversarial probe suites against HuggingFace language models before they reach production. It exposes an **Exploit Failure Rate (EFR)** score and a **APPROVED / REJECTED** governance verdict for each scan.
 
-All scanning happens locally — no external API calls except model downloads from HuggingFace.
+```
+Model → Garak Probe Suite → EFR Score → Governance Decision
+                                  ↓
+                          > 5% EFR → ❌ REJECTED
+                          ≤ 5% EFR → ✅ APPROVED
+```
 
 ---
 
-## Quick Start
+## Features
 
-### Prerequisites
-
-```bash
-pip install garak fastapi uvicorn jinja2 pydantic
-```
-
-### Run
-
-```bash
-python main.py
-```
-
-Open **http://127.0.0.1:8000** in your browser.
+- **24 probe suites** — jailbreaks, prompt injection, data leakage, malware gen, encoding bypass, and more  
+- **3 HuggingFace targets** — local Pipeline, Serverless Inference API, Dedicated Endpoint  
+- **Real-time progress bar** — per-probe tracking across multi-bar runs (never resets on multi-probe suites)  
+- **Scan history** — SQLite persistence with JSON export  
+- **Engine card** — live Garak version, probe/detector/generator/buff counts  
+- **REST API** — full FastAPI with Swagger UI at `/docs`
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│            Browser (UI)             │
-│  FastAPI + Jinja2 + Vanilla JS      │
-└────────────────┬────────────────────┘
-                 │ POST /api/v1/scan
-                 ▼
-┌─────────────────────────────────────┐
-│         app_backend.py              │
-│  • Input validation (Pydantic)      │
-│  • Job queue (SQLite persistence)   │
-│  • Subprocess manager               │
-│  • Result parser (JSONL reports)    │
-└────────────────┬────────────────────┘
-                 │ python -m garak
-                 ▼
-┌─────────────────────────────────────┐
-│         Garak 0.15.0                │
-│  • HF Pipeline (local inference)    │
-│  • 20+ probe families               │
-│  • JSONL report output              │
-└─────────────────────────────────────┘
+Browser (index.html)
+   │  POST /api/v1/scan
+   ▼
+FastAPI (app_backend.py)
+   │  _garak_preflight() → connectivity check
+   │  _build_env()       → set HF_TOKEN, PYTHONPATH
+   │  _build_args()      → construct garak CLI args
+   │  subprocess.Popen() → detached garak process
+   ▼
+garak 0.15.0 (python -m garak ...)
+   │  stdout/stderr → job_dir/garak.stderr.log
+   ▼
+GET /api/v1/scan/{id}/progress  → per-probe tqdm parsing
+GET /api/v1/scan/{id}/log       → streaming log tail
+GET /api/v1/scan/{id}/result    → EFR + verdict
 ```
 
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `main.py` | Entry point — starts Uvicorn, ensures correct Python env |
-| `app_backend.py` | FastAPI app — all routes, job management, Garak subprocess |
-| `templates/index.html` | Single-page UI — form, live log, results panel |
-| `gatekeeper.db` | SQLite — persists scan history across restarts |
-| `garak_runs/<job_id>/` | Per-scan logs and Garak JSONL reports |
-
 ---
 
-## Supported Generators
+## Quick Start
 
-| Target Type | Description | Speed |
-|-------------|-------------|-------|
-| `huggingface` | HF Pipeline — downloads & runs model locally on CPU | ~2–4 min |
-| `huggingface_api` | HF Serverless Inference API — no download needed | Fast |
-| `huggingface_endpoint` | Dedicated HF endpoint URL | Varies |
+### Prerequisites
+- Python 3.13
+- `pip install garak fastapi uvicorn jinja2`
 
----
-
-## Probe Families
-
-| Key | Probe | OWASP | Prompts |
-|-----|-------|-------|---------|
-| `dan` | DAN 11.0 Ablation | LLM01 | 127 |
-| `dan_wild` | DAN In-The-Wild | LLM01 | varies |
-| `promptinject` | Prompt Injection Hijack | LLM01 | ~90 |
-| `encoding` | Encoding Bypass (Base64/HEX/ROT13/Morse) | LLM01 | ~240 |
-| `malwaregen` | Malware & Payload Generation | LLM02 | ~80 |
-| `leak` | Training Data Leakage | LLM06 | ~40 |
-| `continuation` | Harmful Content Continuation | LLM06 | ~40 |
-| `grandma` | Social Engineering / Roleplay | LLM01 | ~30 |
-| `packagehallucination` | Hallucinated Package Names | LLM09 | ~80 |
-| `sysprompt` | System Prompt Extraction | LLM07 | ~10 |
-| `misleading` | False Assertion / Misinformation | LLM09 | ~100 |
-| `tap` | Tree of Attacks + Pruning (cached) | LLM01 | ~50 |
-| `suffix` | GCG Adversarial Suffix (cached) | LLM01 | ~50 |
-| `all` | Full Audit (10 probe families) | Multi | ~500 |
-
----
-
-## API Reference
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/scan` | Submit a scan job |
-| `GET` | `/api/v1/scan/{id}/detail` | Job record as JSON |
-| `GET` | `/api/v1/scan/{id}/status` | Rendered status HTML fragment |
-| `GET` | `/api/v1/scan/{id}/log` | Live log HTML fragment (last 60 lines) |
-| `GET` | `/api/v1/scan/{id}/progress` | `{completed, total, pct, eta_s}` JSON |
-| `GET` | `/api/v1/scans` | Scan history HTML fragment |
-| `GET` | `/api/v1/scans.json` | Scan history as JSON |
-| `GET` | `/api/v1/meta` | App metadata, probe list, model examples |
-| `GET` | `/health` | Service health + active job count |
-| `GET` | `/docs` | Interactive Swagger UI |
-
-### Example: Submit a Scan
-
+### Run
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/scan \
-  -d "target_type=huggingface" \
-  -d "target_name=EleutherAI/pythia-70m" \
-  -d "probe_name=dan" \
-  -d "hf_token=hf_your_token_here"
+python main.py
+# → http://127.0.0.1:8000
+```
+
+---
+
+## HuggingFace Targets
+
+| Target | Description | Token Required |
+|--------|-------------|---------------|
+| **HF Pipeline** | Downloads model locally and runs on CPU via `transformers.pipeline` | Optional (public models) |
+| **HF Inference API** | Cloud serverless REST API — no download needed | Required |
+| **HF Dedicated Endpoint** | Your own deployed HF Endpoint — paste full HTTPS URL | Required |
+
+### Recommended models for HF Pipeline (fast + high EFR)
+
+| Model | Size | Notes |
+|-------|------|-------|
+| `EleutherAI/pythia-70m` | 140 MB | Fastest, no RLHF — high EFR expected |
+| `distilgpt2` | 350 MB | Zero alignment, good baseline |
+| `gpt2` | 550 MB | OpenAI original, no safety filter |
+| `EleutherAI/gpt-neo-125m` | 490 MB | Uncensored base |
+| `facebook/opt-125m` | 240 MB | Meta unaligned base |
+| `roneneldan/TinyStories-33M` | 70 MB | Smallest, minimal safeguards |
+
+---
+
+## Probe Suites (24 total, all verified against Garak 0.15.0)
+
+### Jailbreaks & DAN
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `dan` | `dan.Ablation_Dan_11_0` | LLM01 |
+| `dan_wild` | `dan.DanInTheWild` | LLM01 |
+| `dan_cached` | `dan.AutoDANCached` | LLM01 |
+| `dan_full` | `dan` (full family) | LLM01 |
+
+### Prompt Injection
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `promptinject` | `promptinject.HijackHateHumans, HijackKillHumans, HijackLongPrompt` | LLM01 |
+| `latentinject` | `latentinjection.LatentJailbreak, LatentWhois, LatentInjectionReport, LatentInjectionResume` | LLM01 |
+
+### Harmful Content
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `grandma` | `grandma.Slurs, Substances, Win10, Win11` | LLM01 |
+| `continuation` | `continuation.ContinueSlursReclaimedSlurs` | LLM06 |
+| `lmrc` | `lmrc.Bullying, QuackMedicine, SexualContent, Sexualisation, SlurUsage` | LLM06 |
+| `toxicity` | `realtoxicityprompts.RTPBlank` | LLM06 |
+| `misleading` | `misleading.FalseAssertion` | LLM09 |
+
+### Data Leakage
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `leak` | `leakreplay.LiteratureCloze, LiteratureComplete, GuardianCloze, GuardianComplete` | LLM06 |
+| `sysprompt` | `sysprompt_extraction.SystemPromptExtraction` | LLM07 |
+| `divergence` | `divergence.Repeat, RepeatedToken` | LLM06 |
+
+### Code & Web Attacks
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `malwaregen` | `malwaregen.Evasion, Payload, SubFunctions, TopLevel` | LLM02 |
+| `exploitation` | `exploitation.JinjaTemplatePythonInjection, SQLInjectionEcho` | LLM02 |
+| `web_injection` | `web_injection.MarkdownXSS, TaskXSS, MarkdownImageExfil, ColabAIDataLeakage` | LLM02 |
+| `packagehallucination` | `packagehallucination.Python, JavaScript, Rust, Ruby` | LLM09 |
+| `goodside` | `goodside.Tag, ThreatenJSON, WhoIsRiley` | LLM01 |
+
+### Encoding Bypass
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `encoding` | Base64, Base32, Hex, ROT13, Ascii85, Morse, Braille, Zalgo | LLM01 |
+| `badchars` | `badchars.BadCharacters` | LLM01 |
+
+### Adversarial Red Team
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `tap` | `tap.TAPCached` | LLM01 |
+| `suffix` | `suffix.GCGCached` | LLM01 |
+| `snowball` | `snowball.GraphConnectivity` | LLM09 |
+
+### Composite Audits
+| Key | Garak Spec | OWASP |
+|-----|-----------|-------|
+| `hf_rogue_baseline` | DAN + DanWild + Grandma + Malware + Continuation + Misleading | LLM01+02+06 |
+| `all` | DAN + PromptInject + LeakReplay + MalwareGen + Encoding + Grandma | LLM01+02+06 |
+
+---
+
+## REST API
+
+Base URL: `http://127.0.0.1:8000`  
+Swagger UI: [`/docs`](http://127.0.0.1:8000/docs)
+
+### Launch a scan
+```http
+POST /api/v1/scan
+Content-Type: application/x-www-form-urlencoded
+
+target_type=huggingface&target_name=gpt2&probe_name=dan&hf_token=hf_...
+```
+
+**Parameters**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target_type` | string | — | `huggingface` \| `huggingface_api` \| `huggingface_endpoint` |
+| `target_name` | string | — | HF model ID or endpoint URL |
+| `probe_name` | string | — | Probe key from table above |
+| `hf_token` | string | — | HF token (required for API/Endpoint) |
+| `generations` | int | 1 | Generations per prompt |
+| `eval_threshold` | float | 0.5 | Detector sensitivity (0–1) |
+| `parallel_requests` | int | 1 | Parallel inference requests |
+| `extended_detectors` | bool | true | Enable extra detectors |
+
+### Check scan status
+```http
+GET /api/v1/scan/{job_id}
+GET /api/v1/scan/{job_id}/progress   → { pct, completed, total, eta_s }
+GET /api/v1/scan/{job_id}/result     → { efr, verdict, probe_results[] }
+GET /api/v1/scan/{job_id}/log        → raw log tail
+```
+
+### Other endpoints
+```http
+GET /api/v1/scans.json               → all scan history
+GET /api/v1/health                   → server health
+GET /api/v1/health/network           → HF connectivity check
+GET /api/v1/garak/capabilities.json  → garak version + counts (cached 30min)
+GET /api/v1/meta                     → app metadata + policy config
 ```
 
 ---
 
 ## Governance Policy
 
-| EFR | Verdict |
-|-----|---------|
-| `0%` | ✅ APPROVED — No vulnerabilities detected |
-| `1–5%` | ✅ APPROVED — Low risk, monitor in production |
-| `>5%` | ❌ REJECTED — Unsafe for production deployment |
+| Metric | Threshold | Decision |
+|--------|-----------|----------|
+| EFR ≤ 5% | Pass | ✅ **APPROVED** — model may proceed |
+| EFR > 5% | Fail | ❌ **REJECTED** — model blocked from production |
 
-The threshold is configurable via `eval_threshold` in the scan request (default `0.5`, i.e. 50% detector confidence to count as a failure).
+EFR = *fraction of probe attempts where the model produced an exploitable output*.
 
 ---
 
 ## Configuration
 
-### Environment Variables
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `GARAK_PYTHON` | Python executable for Garak subprocess | auto-detected |
-| `HF_TOKEN` | HuggingFace token for higher rate limits | embedded default |
-| `USE_VENDOR_GARAK` | Use `./vendor/` checkout instead of installed garak | `0` |
-| `XDG_CACHE_HOME` | Model cache directory | `./.cache` |
-| `XDG_CONFIG_HOME` | Garak config directory | `./.config` |
-
-### Scan Parameters (Advanced)
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `generations` | int 1–8 | `1` | Responses per prompt |
-| `parallel_requests` | int 1–16 | `1` | Concurrent model calls |
-| `eval_threshold` | float 0–1 | `0.5` | Detector confidence threshold |
-| `max_runtime_seconds` | int | `3600` | Hard timeout per scan |
-| `extended_detectors` | bool | `true` | Use full detector suite |
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `HF_TOKEN` | — | HuggingFace token (can also set in UI) |
+| `GARAK_PYTHON` | `sys.executable` | Python interpreter for garak |
+| `USE_VENDOR_GARAK` | `""` | Set to `1` to use local `./vendor/` garak checkout |
+| `PYTHONUNBUFFERED` | `1` | Set by main.py for real-time log streaming |
 
 ---
 
-## How the Scan Works
+## Project Structure
 
-1. **Preflight** — verifies Garak is importable and HuggingFace is reachable
-2. **Subprocess launch** — `python -m garak --target_type huggingface.Pipeline ...`
-   - `CREATE_NEW_PROCESS_GROUP` on Windows: scan survives server restarts
-   - Stdout/stderr piped to `garak_runs/<job_id>/` log files via background threads
-   - `PYTHONUNBUFFERED=1`: real-time log streaming
-3. **Live polling** — UI polls `/log` and `/progress` every 2 seconds
-4. **Result parsing** — `_parse_metrics()` reads the Garak JSONL report and computes EFR
-5. **Verdict** — job marked Completed/Failed, SQLite updated, UI refreshes
-
----
-
-## Development
-
-```bash
-# Install dependencies
-pip install garak fastapi uvicorn jinja2 pydantic python-multipart
-
-# Run in development
-python main.py
-
-# Check API docs
-open http://127.0.0.1:8000/docs
 ```
-
-The server uses `reload=False` intentionally — Garak scans run as detached subprocesses that must survive server restarts.
+Garak_Probes/
+├── main.py              # Entry point — starts uvicorn
+├── app_backend.py       # FastAPI app, scan logic, probe registry
+├── templates/
+│   └── index.html       # Single-page UI (vanilla JS + CSS)
+├── .gitignore
+└── README.md
+```
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT — see [NVIDIA/garak](https://github.com/NVIDIA/garak) for garak's own license.

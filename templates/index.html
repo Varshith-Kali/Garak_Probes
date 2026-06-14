@@ -887,45 +887,35 @@ function showFormError(msg) {
   sel("form-error").style.display = "block";
 }
 
-// HF rogue model list (small, downloadable via hf-mirror.com — no VPN needed)
-const HF_ROGUE_MODELS = [
-  { v: "EleutherAI/gpt-neo-125m",      label: "GPT-Neo 125M — Uncensored base, no RLHF (490MB)" },
-  { v: "distilgpt2",                    label: "DistilGPT-2 — Base model, zero alignment (350MB)" },
-  { v: "gpt2",                          label: "GPT-2 — Original OpenAI base, no filter (550MB)" },
-  { v: "facebook/opt-125m",             label: "OPT-125M — Meta unaligned base (240MB)" },
-  { v: "EleutherAI/pythia-70m",         label: "Pythia-70M — Tiny, no RLHF training (140MB)" },
-  { v: "EleutherAI/pythia-160m",        label: "Pythia-160M — No alignment, raw pretraining (350MB)" },
-  { v: "roneneldan/TinyStories-33M",    label: "TinyStories-33M — Minimal safeguards (70MB)" },
-];
 
+// --- PROVIDER CONFIG ---
 async function checkMirrorStatus() {
   const banner = sel("net-status");
   if (!banner) return;
   const type = sel("sel-type")?.value;
   if (type !== "huggingface") { banner.style.display = "none"; return; }
 
-  banner.style.display = "block";
-  banner.style.border  = "1px solid rgba(100,100,100,.15)";
+  banner.style.display    = "block";
+  banner.style.border     = "1px solid rgba(100,100,100,.15)";
   banner.style.background = "rgba(100,100,100,.05)";
-  banner.style.color   = "#888";
-  banner.innerHTML     = "⟳ Checking hf-mirror.com…";
+  banner.style.color      = "#888";
+  banner.innerHTML        = "⟳ Checking huggingface.co…";
 
   try {
-    const r = await fetch("/api/v1/health/network", { signal: AbortSignal.timeout(6000) });
+    const r = await fetch("/api/v1/health/network", { signal: AbortSignal.timeout(7000) });
     if (r.ok) {
       const d = await r.json();
-      const mirrorOk  = d.hf_mirror_reachable !== false; // true by default if key absent
-      const ollamaOk  = d.ollama_reachable === true;
-      if (mirrorOk) {
+      const hfOk = d.hf_reachable !== false;
+      if (hfOk) {
         banner.style.border     = "1px solid rgba(52,211,153,.2)";
         banner.style.background = "rgba(52,211,153,.06)";
         banner.style.color      = "#34d399";
-        banner.innerHTML        = "✓ <strong>hf-mirror.com reachable</strong> — model downloads will work without VPN";
+        banner.innerHTML        = "✓ <strong>huggingface.co reachable</strong> — model downloads ready";
       } else {
         banner.style.border     = "1px solid rgba(245,158,11,.2)";
         banner.style.background = "rgba(245,158,11,.06)";
         banner.style.color      = "#f59e0b";
-        banner.innerHTML        = "⚠ <strong>hf-mirror.com unreachable</strong> — check internet connection";
+        banner.innerHTML        = "⚠ <strong>huggingface.co unreachable</strong> — check internet or use HF Inference API";
       }
     }
   } catch {
